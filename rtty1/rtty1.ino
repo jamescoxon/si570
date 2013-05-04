@@ -20,14 +20,16 @@
 //https://github.com/steamfire/WSWireLib/tree/master/Library/WSWire
 #include <WSWire.h>
 #include <Arduino.h>
+#include <util/crc16.h>
 
 
 char superbuffer [80]; //Telem string buffer
 int txPin = 6; // radio tx line
 int ledPin =  13; // LED 
 int mode = 0;
-int count = 0;
-int delay_time = 50;
+int count = 0, Tcount = 0, navmode = 0, psm_status = 9;
+int32_t lat = 514981000, lon = -530000, alt = 36000;
+uint8_t hour = 0, minute = 0, second = 0, month = 0, day = 0, lock = 0, sats = 0;
 byte regAddr;					// First register address (7 or 13)
 byte i2cAddress = 0x55;
 
@@ -83,8 +85,8 @@ struct t_mtab morsetab[] = {
 #define N_MORSE  (sizeof(morsetab)/sizeof(morsetab[0]))
 
 #define SPEED  (1)
-#define DOTLEN  (10000)
-#define DASHLEN  (30000)
+#define DOTLEN  (1000)
+#define DASHLEN  (3000)
 
 //#define DOTLEN  (1200/SPEED)
 //#define DASHLEN  (3*(1200/SPEED))
@@ -266,7 +268,6 @@ void setFrequency(byte x){
     i2cWriteBuf[5] = 0x20;
   }
   
-   //byte i2cWriteBuf[] = {0xEA, 0xC2, 0xAE, 0xF3, 0xD4, 0x87};
   //Freeze DCO
   //freezeDCO();
   
@@ -283,6 +284,36 @@ void setFrequency(byte x){
   err |= writeRegister(135, SI570_R135_DEFAULT);
   //Unfreeze DCO
   //unfreezeDCO();
+}
+
+void prepData() {
+  //if(gpsstatus == 1){
+    //gps_check_lock();
+    //gps_get_position();
+    //gps_get_time();
+  //}
+  Tcount++;
+  int n;
+  n=sprintf (superbuffer, "$$ATLAS,%d,%02d:%02d:%02d,%ld,%ld,%ld,%d,%d,%d,%d", Tcount, hour, minute, second, lat, lon, alt, sats, navmode, psm_status, lock);
+  n = sprintf (superbuffer, "%s*%04X\n", superbuffer, gps_CRC16_checksum(superbuffer));
+}
+
+uint16_t gps_CRC16_checksum (char *string)
+{
+  size_t i;
+  uint16_t crc;
+  uint8_t c;
+
+  crc = 0xFFFF;
+
+  // Calculate checksum ignoring the first two $s
+  for (i = 2; i < strlen(string); i++)
+  {
+    c = string[i];
+    crc = _crc_xmodem_update (crc, c);
+  }
+
+  return crc;
 }
 
 void setup() {
@@ -309,26 +340,23 @@ digitalWrite(txPin, HIGH);
 }
 
 void loop() {
+  
+  prepData();
+  if(count < 20){
     //Enable the si570 early
     delay(1000);
-    rtty_txstring("$$$$M6JCX,HIGH,ALTITUDE,BALLOON\n");
+    rtty_txstring(superbuffer);
     digitalWrite(txPin, LOW);
+    count++;
+  }
+  else{
+    digitalWrite(txPin, HIGH);
+    sendmsg(superbuffer);
+    digitalWrite(txPin, LOW);
+    count = 0;
+  }
     
     delay(3000);
     digitalWrite(txPin, HIGH);
+    
 }
-
-  //Some additional frequencies
-  //28.200Mhz E3 C2 B4 2F 7D 1E
-  //byte i2cWriteBuf[] = {0xE3, 0xC2, 0xB4, 0x2F, 0x7D, 0x1E};
-  
-  //10.140Mhz EA C2 AF 29 0E EC
-  //10.137Mhz EAC2AEE3B123
-  
-  //EAC2AEF3D487
-  
-  //434.00Mhz 40 42 D8 E9 35 68
-  //byte i2cWriteBuf[] = {0x40, 0x42, 0xD8, 0xE9, 0x35, 0x68};
-  
-  //144.100Mhz A0 C2 D6 0E 48 40
-  //byte i2cWriteBuf[] = {0xA0, 0xC2, 0xD6, 0x0E, 0x48, 0x40};  

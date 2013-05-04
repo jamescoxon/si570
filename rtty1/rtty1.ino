@@ -252,16 +252,18 @@ byte unfreezeDCO(void) {
 
 void setFrequency(byte x){
   byte err;
-  //10.140016Mhz
-  byte i2cWriteBuf[] = {0xEA, 0xC2, 0xAE, 0xFC, 0x05, 0xAE};
   
+  //13.5576Mhz = A9 C2 AB 4E AB EA
+  byte i2cWriteBuf[] = {0xA9, 0xC2, 0xAB, 0x4E, 0xAB, 0xEA};
+  
+    //13.558Mhz = A9 C2 AB 53 D5 20
     if(x == 1){
-    i2cWriteBuf[0] = 0xEA;
+    i2cWriteBuf[0] = 0xA9;
     i2cWriteBuf[1] = 0xC2;
-    i2cWriteBuf[2] = 0xAE;
-    i2cWriteBuf[3] = 0xF3;
-    i2cWriteBuf[4] = 0xD4;
-    i2cWriteBuf[5] = 0x87;
+    i2cWriteBuf[2] = 0xAB;
+    i2cWriteBuf[3] = 0x53;
+    i2cWriteBuf[4] = 0xD5;
+    i2cWriteBuf[5] = 0x20;
   }
   
    //byte i2cWriteBuf[] = {0xEA, 0xC2, 0xAE, 0xF3, 0xD4, 0x87};

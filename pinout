@@ -1,0 +1,12 @@
+
+Top Row
+7 SDA
+6 VDD
+5 CLK-
+4 CLK+
+
+Bottom Row
+1 NC
+2 OE
+3 GND
+8 SCL

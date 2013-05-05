@@ -84,12 +84,12 @@ struct t_mtab morsetab[] = {
 } ;
 #define N_MORSE  (sizeof(morsetab)/sizeof(morsetab[0]))
 
-#define SPEED  (1)
-#define DOTLEN  (1000)
-#define DASHLEN  (3000)
+#define SPEED  (14)
+//#define DOTLEN  (1000)
+//#define DASHLEN  (3000)
 
-//#define DOTLEN  (1200/SPEED)
-//#define DASHLEN  (3*(1200/SPEED))
+#define DOTLEN  (1200/SPEED)
+#define DASHLEN  (3*(1200/SPEED))
 
 void
 dash()

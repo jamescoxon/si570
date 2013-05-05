@@ -256,14 +256,16 @@ void setFrequency(byte x){
   byte err;
   
   //13.5576Mhz = A9 C2 AB 4E AB EA
-  byte i2cWriteBuf[] = {0xA9, 0xC2, 0xAB, 0x4E, 0xAB, 0xEA};
+  //26.9574Mhz = A4 C2 A7 55 4F 99
+  byte i2cWriteBuf[] = {0xA4, 0xC2, 0xA7, 0x55, 0x4F, 0x99};
   
     //13.558Mhz = A9 C2 AB 53 D5 20
+    //26.957 A4 C2 A7 52 15 D7
     if(x == 1){
-    i2cWriteBuf[0] = 0xA9;
+    i2cWriteBuf[0] = 0xA4;
     i2cWriteBuf[1] = 0xC2;
-    i2cWriteBuf[2] = 0xAB;
-    i2cWriteBuf[3] = 0x53;
+    i2cWriteBuf[2] = 0xA7;
+    i2cWriteBuf[3] = 0x52;
     i2cWriteBuf[4] = 0xD5;
     i2cWriteBuf[5] = 0x20;
   }

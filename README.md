@@ -11,3 +11,4 @@ changing the frequency and then once changed high again this avoided it hanging.
 
 To calculate the required hex to set a frequency I use ZS6BUJ's xls:
 www.zs6buj.com/files/General/ZS6BUJ_Si570_Calculator.xls
+- Remember that the SDR freq is 1/4 of the Fout

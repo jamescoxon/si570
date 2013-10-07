@@ -126,6 +126,121 @@ void hellsendmsg(char *str)
   //Serial.println("");
 }
 
+/******************CW**************/
+
+struct t_mtab { char c, pat; } ;
+
+struct t_mtab morsetab[] = {
+  	{'.', 106},
+	{',', 115},
+	{'?', 76},
+	{'/', 41},
+        {'-', 97},
+	{'A', 6},
+	{'B', 17},
+	{'C', 21},
+	{'D', 9},
+	{'E', 2},
+	{'F', 20},
+	{'G', 11},
+	{'H', 16},
+	{'I', 4},
+	{'J', 30},
+	{'K', 13},
+	{'L', 18},
+	{'M', 7},
+	{'N', 5},
+	{'O', 15},
+	{'P', 22},
+	{'Q', 27},
+	{'R', 10},
+	{'S', 8},
+	{'T', 3},
+	{'U', 12},
+	{'V', 24},
+	{'W', 14},
+	{'X', 25},
+	{'Y', 29},
+	{'Z', 19},
+	{'1', 62},
+	{'2', 60},
+	{'3', 56},
+	{'4', 48},
+	{'5', 32},
+	{'6', 33},
+	{'7', 35},
+	{'8', 39},
+	{'9', 47},
+	{'0', 63}
+} ;
+#define N_MORSE  (sizeof(morsetab)/sizeof(morsetab[0]))
+
+#define SPEED  (1)
+#define DOTLEN  (10000)
+#define DASHLEN  (30000)
+
+//#define DOTLEN  (1200/SPEED)
+//#define DASHLEN  (3*(1200/SPEED))
+
+void
+dash()
+{
+  digitalWrite(txPin, HIGH);
+  digitalWrite(ledPin, HIGH);
+  delay(DASHLEN);
+  digitalWrite(txPin, LOW);
+  digitalWrite(ledPin, LOW);
+  delay(DOTLEN) ;
+}
+
+void
+dit()
+{
+  digitalWrite(txPin, HIGH);
+  digitalWrite(ledPin, HIGH);
+  delay(DOTLEN);
+  digitalWrite(txPin, LOW);
+  digitalWrite(ledPin, LOW);
+  delay(DOTLEN);
+}
+
+void
+send(char c)
+{
+  int i ;
+  if (c == ' ') {
+    Serial.print(c) ;
+    delay(7*DOTLEN) ;
+    return ;
+  }
+  for (i=0; i<N_MORSE; i++) {
+    if (morsetab[i].c == c) {
+      unsigned char p = morsetab[i].pat ;
+      Serial.print(morsetab[i].c) ;
+
+      while (p != 1) {
+          if (p & 1)
+            dash() ;
+          else
+            dit() ;
+          p = p / 2 ;
+      }
+      delay(2*DOTLEN) ;
+      return ;
+    }
+  }
+  /* if we drop off the end, then we send a space */
+  Serial.print("?") ;
+}
+
+void
+sendCWmsg(char *str)
+{
+  while (*str)
+    send(*str++) ;
+  Serial.println("");
+}
+
 // RTTY Functions - from RJHARRISON's AVR Code
 void rtty_txstring (char * string)
 {
@@ -335,17 +450,25 @@ void setup() {
 
 void loop() {
   
-    prepData();
     
     setFrequency(0);
     delay(500);
     
+    //First Slow slow CW
+    sendCWmsg("AT AT");
+    
+    delay(2500);
+    prepData();
+    delay(2500);
+    
+    //Then SlowHell
     hellsendmsg(superbuffer);
     //Make sure transmitter is off
     digitalWrite(txPin, LOW);
     //Sleep
     delay(5000);     
     
+    //Then RTTY
     digitalWrite(txPin, HIGH);
     rtty_txstring("$$$$$$");
     delay(500);

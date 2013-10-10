@@ -18,6 +18,8 @@ int count = 0;
 byte regAddr; // First register address (7 or 13)
 byte i2cAddress = 0x55;
 
+volatile int go_thor = 0;
+
 #define SI570_R137_FREEZE_DCO	(1 << 4)
 
 
@@ -142,65 +144,8 @@ static uint16_t _thor_lookup_code(uint8_t c, uint8_t sec)
 
 ISR(TIMER2_COMPA_vect)
 {
-	static uint16_t da = 0, db = 0;
-	static uint16_t code;
-	static uint8_t tone = 0;
-	static uint8_t len = 0;
-	uint8_t i, bit_sh;
-	
-	/* Timing */
-	da += SAMPLERATE;
-	while(da >= _sr)
-	{
-		db++;
-		da -= SAMPLERATE;
-	}
-	
-	if(db < _sl) return;
-	db = 0;
-	
-	/* Transmit the tone */
-        quickTone(tone);
-	
-	if(_preamble)
-	{
-		tone = (tone + 2) % TONES;
-		_preamble--;
-		return;
-	}
-	
-	/* Calculate the next tone */
-	bit_sh = 0;
-	for(i = 0; i < 2; i++)
-	{
-		uint8_t data;
-		
-		/* Done sending the current varicode? */
-		if(!len)
-		{
-			if(_txlen)
-			{
-				/* Read the next character */
-				if(_txpgm == 0) data = *(_txbuf++);
-				else data = pgm_read_byte(_txbuf++);
-				_txlen--;
-			}
-			else data = 0;
-			
-			/* Get the varicode for this character */
-			code = _thor_lookup_code(data, 0);
-			len  = code >> 12;
-		}
-		
-		/* Feed the next bit into the convolutional encoder */
-		data = _thor_conv_encode((code >> --len) & 1);
-		
-		bit_sh = (bit_sh << 1) | (data & 1);
-		bit_sh = (bit_sh << 1) | ((data >> 1) & 1);
-	}
-	
-	_thor_interleave(&bit_sh);
-	tone = (tone + 2 + bit_sh) % TONES;
+  go_thor = 1;
+  //Serial.print(".");
 }
 
 void thor_init(thor_mode_t mode)
@@ -316,11 +261,24 @@ void thor_init(thor_mode_t mode)
 	//TCCR2B = _BV(CS20);
 	//OCR2A = 0x80;
         
-        OCR2A = F_CPU / 128 / SAMPLERATE - 1;
-	TCCR2A |= (1 << WGM21); /* Mode 2, CTC */
-	TCCR2B = 1<<CS22 | 1<<CS20; 
-	TIMSK2 |= (1 << OCIE2A);
+        cli();
+        
+        TCCR2A = 0;// set entire TCCR2A register to 0
+        TCCR2B = 0;// same for TCCR2B
+ /* 
+        //OCR2A = F_CPU / 64 / SAMPLERATE - 1;
+        OCR2A = 4;
+	TCCR2A |= _BV(WGM21); // Mode 2, CTC
+        TCCR2B |= _BV(CS21) | _BV(CS22); //pre-scaler = 256
+	TIMSK2 |= _BV(OCIE2A);
+*/
 
+        TCCR2A = _BV(WGM21); /* Mode 2, CTC */
+        TCCR2B = _BV(CS22) | _BV(CS20);/* prescaler 128 */
+        OCR2A = F_CPU / 128 / SAMPLERATE - 1;
+        TIMSK2 = _BV(OCIE2A); /* Enable interrupt */
+        
+         sei();
 
 }
 
@@ -332,7 +290,7 @@ void inline thor_wait(void)
 
 void thor_data(uint8_t *data, size_t length)
 {
-	thor_wait();
+	//thor_wait();
 	_txpgm = 0;
 	_txbuf = data;
 	_txlen = length;
@@ -340,7 +298,7 @@ void thor_data(uint8_t *data, size_t length)
 
 void thor_data_P(PGM_P data, size_t length)
 {
-	thor_wait();
+	//thor_wait();
 	_txpgm = 1;
 	_txbuf = (uint8_t *) data;
 	_txlen = length;
@@ -356,6 +314,68 @@ void thor_string_P(PGM_P s)
 {
 	uint16_t length = strlen_P(s);
 	thor_data_P(s, length);
+}
+
+void update_thor() {
+  	static uint16_t da = 0, db = 0;
+	static uint16_t code;
+        static uint8_t tone = 0;
+	static uint8_t len = 0;
+	uint8_t i, bit_sh;
+	
+	/* Timing */
+	da += SAMPLERATE;
+	while(da >= _sr)
+	{
+		db++;
+		da -= SAMPLERATE;
+	}
+	
+	if(db < _sl) return;
+	db = 0;
+	
+	/* Transmit the tone */
+        quickTone(tone);
+	
+	if(_preamble)
+	{
+		tone = (tone + 2) % TONES;
+		_preamble--;
+		return;
+	}
+	
+	/* Calculate the next tone */
+	bit_sh = 0;
+	for(i = 0; i < 2; i++)
+	{
+		uint8_t data;
+		
+		/* Done sending the current varicode? */
+		if(!len)
+		{
+			if(_txlen)
+			{
+				/* Read the next character */
+				if(_txpgm == 0) data = *(_txbuf++);
+				else data = pgm_read_byte(_txbuf++);
+				_txlen--;
+			}
+			else data = 0;
+			
+			/* Get the varicode for this character */
+			code = _thor_lookup_code(data, 0);
+			len  = code >> 12;
+		}
+		
+		/* Feed the next bit into the convolutional encoder */
+		data = _thor_conv_encode((code >> --len) & 1);
+		
+		bit_sh = (bit_sh << 1) | (data & 1);
+		bit_sh = (bit_sh << 1) | ((data >> 1) & 1);
+	}
+	
+	_thor_interleave(&bit_sh);
+	tone = (tone + 2 + bit_sh) % TONES;
 }
 
 
@@ -400,52 +420,87 @@ byte unfreezeDCO(void) {
 }
 
 void quickTone(uint8_t aTone){
-  
-  
-  Serial.print(aTone);
-  Serial.print(" ");
-  //Wire.beginTransmission(0x55);
 
-  byte i2cWriteBuf[] = {0xE8, 0x42, 0xC5, 0xA0, 0x4D, 0x26};
+  byte r = 4;
+  byte i2cWriteBuf[] = {0xE1, 0xC2, 0xB5, 0xA9, 0x01, 0xC4};
   
+  
+  i2cWriteBuf[r] = 0x01 + (aTone * 8);
   /* Setup per-mode parameters */
   /*
   switch(aTone)
   {
     case 0:
-    //i2cWriteBuf[0] = 0xE8;
-    //i2cWriteBuf[1] = 0x42;
-    //i2cWriteBuf[2] = 0xC6;
-    i2cWriteBuf[3] = 0xA4;
-    //i2cWriteBuf[4] = 0x8B;
-    //i2cWriteBuf[5] = 0xBA;
-    break;
-    
+      i2cWriteBuf[r] = 0xC4;
+      break;   
     case 1:
-    //i2cWriteBuf[0] = 0xE8;
-    //i2cWriteBuf[1] = 0x42;
-    //i2cWriteBuf[2] = 0xC6;
-    i2cWriteBuf[3] = 0xA4;
-    //i2cWriteBuf[4] = 0x8B;
-    //i2cWriteBuf[5] = 0xBA;
-    break;
-    
-    default:
-      return;
+      i2cWriteBuf[r] = 0xC5;
+      break;
+    case 2:
+      i2cWriteBuf[r] = 0xC6;
+      break;
+    case 3:
+      i2cWriteBuf[r] = 0xC7;
+      break;
+    case 4:
+      i2cWriteBuf[r] = 0xC8;
+      break;
+    case 5:
+      i2cWriteBuf[r] = 0xC9;
+      break;
+    case 6:
+      i2cWriteBuf[r] = 0xCa;
+      break;
+    case 7:
+      i2cWriteBuf[r] = 0xCb;
+      break;
+    case 8:
+      i2cWriteBuf[r] = 0xCc;
+      break;
+    case 9:
+      i2cWriteBuf[r] = 0xCd;
+      break;
+    case 10:
+      i2cWriteBuf[r] = 0xCf;
+      break;
+    case 11:
+      i2cWriteBuf[r] = 0xe0;
+      break;
+    case 12:
+      i2cWriteBuf[r] = 0xe1;
+      break;
+    case 13:
+      i2cWriteBuf[r] = 0xe2;
+      break;
+    case 14:
+      i2cWriteBuf[r] = 0xe3;
+      break;
+    case 15:
+      i2cWriteBuf[r] = 0xe4;
+      break;
+    case 16:
+      i2cWriteBuf[r] = 0xe5;
+      break;
+    case 17:
+      i2cWriteBuf[r] = 0xe6;
+      break;
     }
-    */
-    //Wire.write(0x07);
-  //	for (byte i = 0; i < 6 ; ++i) {
-  //		Wire.write(i2cWriteBuf[i]);
-  //	}
-  //Wire.endTransmission();
+  */
+  //Serial.print(i2cWriteBuf[r]);
+  
+  Wire.beginTransmission(0x55);
+    Wire.write(0x07);
+  	for (byte i = 0; i < 6 ; ++i) {
+  		Wire.write(i2cWriteBuf[i]);
+  	}
+  Wire.endTransmission();
 }
 
 void quickFreq(byte x){
   
   Wire.beginTransmission(0x55);
 
-  byte i2cWriteBuf[] = {0xE8, 0x42, 0xC5, 0xA0, 0x4D, 0x26};
+  byte i2cWriteBuf[] = {0xE1, 0xC2, 0xB5, 0xA9, 0xD9, 0xC4};
  
     if(x == 1){
     //i2cWriteBuf[0] = 0xE8;
@@ -471,6 +526,9 @@ void setFrequency(byte x){
   Wire.beginTransmission(0x55);
   //Send the stuff here
   
+  //E1 C2 B5 A9 D9 C4
+  byte i2cWriteBuf[] = {0xE1, 0xC2, 0xB5, 0xA9, 0xD9, 0xC4};
+
   //byte i2cWriteBuf[] = {0xA2, 0x42, 0xAB, 0x3A, 0x62, 0xE7};
   //28.200Mhz E3 C2 B4 2F 7D 1E
   //byte i2cWriteBuf[] = {0xE3, 0xC2, 0xB4, 0x2F, 0x7D, 0x1E};
@@ -482,8 +540,9 @@ void setFrequency(byte x){
   //13.556Mhz E8 42 C5 CC 4D 26
   //byte i2cWriteBuf[] = {0xE8, 0x42, 0xC5, 0xCC, 0x4D, 0x26};
   
+  //13.553
   //E8 42 C4 C0 4B 86
-  byte i2cWriteBuf[] = {0xE8, 0x42, 0xC5, 0xA0, 0x4D, 0x26};
+  //byte i2cWriteBuf[] = {0xE8, 0x42, 0xC5, 0xA0, 0x4D, 0x26};
 
   //434.00Mhz 40 42 D8 E9 35 68
   //byte i2cWriteBuf[] = {0x40, 0x42, 0xD8, 0xE9, 0x35, 0x68};
@@ -545,20 +604,38 @@ void setup() {
         Serial.println(readRegister(137));
         digitalWrite(txPin, LOW);
         
-        sei();//allow interrupts
+        digitalWrite(txPin, HIGH);
+        delay(2500);
+        quickFreq(1);
+        delay(2500);
+        digitalWrite(txPin, LOW);
+        quickFreq(0);
         
         thor_init(THOR11);
 	
 	thor_data_P(PSTR("\0\x0D\x02\x0D"), 4);
 
         Serial.println("Setup Complete");
+        
+        digitalWrite(txPin, HIGH);
 }
 
 void loop() {
-    
-    thor_string_P(PSTR("Hello, World!\n"));
-    
-    delay(500);
+    long int count = 0;
+    thor_string("Hello World\n");
+
+    while(1){
+      if(go_thor == 1){
+        //Serial.print(".");
+        update_thor();
+        go_thor = 0;
+      }
+      count++;
+      if(count > 999999){
+        thor_string("Hello World\n");
+        count = 0;
+      }
+    }
     
 }
 

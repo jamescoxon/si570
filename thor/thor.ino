@@ -1,4 +1,3 @@
-#include <Wire.h>
 #include <Arduino.h>
 #include <util/crc16.h>
 #include <avr/io.h>
@@ -7,6 +6,7 @@
 #include <string.h>
 #include "thor.h"
 #include "thor_varicode.h"
+#include "i2c.h"
 
 #define F_CPU (8000000)
 
@@ -14,6 +14,7 @@ char superbuffer [80]; //Telem string buffer
 int txPin = 6; // radio tx line
 int ledPin =  13; // LED 
 int count = 0;
+float fudgeValue = 7;
 
 byte regAddr; // First register address (7 or 13)
 byte i2cAddress = 0x55;
@@ -141,11 +142,69 @@ static uint16_t _thor_lookup_code(uint8_t c, uint8_t sec)
 	/* Else return NUL */
 	return(pgm_read_word(&_varicode[0]));
 }
-
 ISR(TIMER2_COMPA_vect)
 {
-  go_thor = 1;
-  //Serial.print(".");
+	static uint16_t da = 0, db = 0;
+	static uint16_t code;
+	static uint8_t tone = 0;
+	static uint8_t len = 0;
+	uint8_t i, bit_sh;
+	
+	/* Timing */
+	da += SAMPLERATE;
+	while(da >= _sr)
+	{
+		db++;
+		da -= SAMPLERATE;
+	}
+	
+	if(db < _sl) return;
+	db = 0;
+	
+	/* Transmit the tone */
+        //Serial.print(tone);
+        quickTone(tone);
+        //Serial.print(tone);
+	
+	if(_preamble)
+	{
+		tone = (tone + 2) % TONES;
+		_preamble--;
+		return;
+	}
+	
+	/* Calculate the next tone */
+	bit_sh = 0;
+	for(i = 0; i < 2; i++)
+	{
+		uint8_t data;
+		
+		/* Done sending the current varicode? */
+		if(!len)
+		{
+			if(_txlen)
+			{
+				/* Read the next character */
+				if(_txpgm == 0) data = *(_txbuf++);
+				else data = pgm_read_byte(_txbuf++);
+				_txlen--;
+			}
+			else data = 0;
+			
+			/* Get the varicode for this character */
+			code = _thor_lookup_code(data, 0);
+			len  = code >> 12;
+		}
+		
+		/* Feed the next bit into the convolutional encoder */
+		data = _thor_conv_encode((code >> --len) & 1);
+		
+		bit_sh = (bit_sh << 1) | (data & 1);
+		bit_sh = (bit_sh << 1) | ((data >> 1) & 1);
+	}
+	
+	_thor_interleave(&bit_sh);
+	tone = (tone + 2 + bit_sh) % TONES;
 }
 
 void thor_init(thor_mode_t mode)
@@ -290,7 +349,7 @@ void inline thor_wait(void)
 
 void thor_data(uint8_t *data, size_t length)
 {
-	//thor_wait();
+	thor_wait();
 	_txpgm = 0;
 	_txbuf = data;
 	_txlen = length;
@@ -298,7 +357,7 @@ void thor_data(uint8_t *data, size_t length)
 
 void thor_data_P(PGM_P data, size_t length)
 {
-	//thor_wait();
+	thor_wait();
 	_txpgm = 1;
 	_txbuf = (uint8_t *) data;
 	_txlen = length;
@@ -316,189 +375,29 @@ void thor_string_P(PGM_P s)
 	thor_data_P(s, length);
 }
 
-void update_thor() {
-  	static uint16_t da = 0, db = 0;
-	static uint16_t code;
-        static uint8_t tone = 0;
-	static uint8_t len = 0;
-	uint8_t i, bit_sh;
-	
-	/* Timing */
-	da += SAMPLERATE;
-	while(da >= _sr)
-	{
-		db++;
-		da -= SAMPLERATE;
-	}
-	
-	if(db < _sl) return;
-	db = 0;
-	
-	/* Transmit the tone */
-        quickTone(tone);
-	
-	if(_preamble)
-	{
-		tone = (tone + 2) % TONES;
-		_preamble--;
-		return;
-	}
-	
-	/* Calculate the next tone */
-	bit_sh = 0;
-	for(i = 0; i < 2; i++)
-	{
-		uint8_t data;
-		
-		/* Done sending the current varicode? */
-		if(!len)
-		{
-			if(_txlen)
-			{
-				/* Read the next character */
-				if(_txpgm == 0) data = *(_txbuf++);
-				else data = pgm_read_byte(_txbuf++);
-				_txlen--;
-			}
-			else data = 0;
-			
-			/* Get the varicode for this character */
-			code = _thor_lookup_code(data, 0);
-			len  = code >> 12;
-		}
-		
-		/* Feed the next bit into the convolutional encoder */
-		data = _thor_conv_encode((code >> --len) & 1);
-		
-		bit_sh = (bit_sh << 1) | (data & 1);
-		bit_sh = (bit_sh << 1) | ((data >> 1) & 1);
-	}
-	
-	_thor_interleave(&bit_sh);
-	tone = (tone + 2 + bit_sh) % TONES;
-}
-
-
-byte writeRegister(byte byteAddress, byte value) {
-
-	// IMPORTANT: This method must run fast
-	// because used in the "Unfreeze DCO + Assert new freq" sequence
-	// So don't debug here !
-
-	Wire.beginTransmission(i2cAddress);
-	Wire.write(byteAddress);
-	Wire.write(value);
-	Wire.endTransmission();
-
-}
-
-byte readRegister(byte byteAddress) {
-	byte resp;
-
-	Wire.beginTransmission(i2cAddress);
-	Wire.write(byteAddress);
-	//NOTE: Needs arduino libs >= 1.0.1 (use of sendStop option)
-	Wire.endTransmission(false);
-	Wire.requestFrom((byte) i2cAddress, (byte) 1);
-	resp = Wire.read();
-	Wire.endTransmission();
-        return resp;
-}
-
 byte freezeDCO(void) {
 	int idco;
 	 // Freeze DCO
-        idco = readRegister( 137 );
-	writeRegister (137, idco | 0x10 );
+        idco = i2cReadRegister(0x55, 137);
+	i2cWriteRegister (0x55, 137, idco | 0x10 );
 }
 
 byte unfreezeDCO(void) {
         int idco;
 	// Unfreeze DCO
-        idco = readRegister( 137 );
-	writeRegister (137, idco & 0xEF );
+        idco = i2cReadRegister(0x55, 137);
+	i2cWriteRegister (0x55, 137, idco & 0xEF );
 }
 
 void quickTone(uint8_t aTone){
-
-  byte r = 4;
+  
   byte i2cWriteBuf[] = {0xE1, 0xC2, 0xB5, 0xA9, 0x01, 0xC4};
-  
-  
-  i2cWriteBuf[r] = 0x01 + (aTone * 8);
-  /* Setup per-mode parameters */
-  /*
-  switch(aTone)
-  {
-    case 0:
-      i2cWriteBuf[r] = 0xC4;
-      break;   
-    case 1:
-      i2cWriteBuf[r] = 0xC5;
-      break;
-    case 2:
-      i2cWriteBuf[r] = 0xC6;
-      break;
-    case 3:
-      i2cWriteBuf[r] = 0xC7;
-      break;
-    case 4:
-      i2cWriteBuf[r] = 0xC8;
-      break;
-    case 5:
-      i2cWriteBuf[r] = 0xC9;
-      break;
-    case 6:
-      i2cWriteBuf[r] = 0xCa;
-      break;
-    case 7:
-      i2cWriteBuf[r] = 0xCb;
-      break;
-    case 8:
-      i2cWriteBuf[r] = 0xCc;
-      break;
-    case 9:
-      i2cWriteBuf[r] = 0xCd;
-      break;
-    case 10:
-      i2cWriteBuf[r] = 0xCf;
-      break;
-    case 11:
-      i2cWriteBuf[r] = 0xe0;
-      break;
-    case 12:
-      i2cWriteBuf[r] = 0xe1;
-      break;
-    case 13:
-      i2cWriteBuf[r] = 0xe2;
-      break;
-    case 14:
-      i2cWriteBuf[r] = 0xe3;
-      break;
-    case 15:
-      i2cWriteBuf[r] = 0xe4;
-      break;
-    case 16:
-      i2cWriteBuf[r] = 0xe5;
-      break;
-    case 17:
-      i2cWriteBuf[r] = 0xe6;
-      break;
-    }
-  */
-  //Serial.print(i2cWriteBuf[r]);
-  
-  Wire.beginTransmission(0x55);
-    Wire.write(0x07);
-  	for (byte i = 0; i < 6 ; ++i) {
-  		Wire.write(i2cWriteBuf[i]);
-  	}
-  Wire.endTransmission();
+  int toneValue = (0x01 + int(aTone * fudgeValue));
+  //Serial.println(toneValue);
+  i2cWriteRegister(0x55, 0xb, toneValue);
 }
 
 void quickFreq(byte x){
-  
-  Wire.beginTransmission(0x55);
 
   byte i2cWriteBuf[] = {0xE1, 0xC2, 0xB5, 0xA9, 0xD9, 0xC4};
  
@@ -511,11 +410,7 @@ void quickFreq(byte x){
     //i2cWriteBuf[5] = 0xBA;
   }
   
-    Wire.write(0x07);
-  	for (byte i = 0; i < 6 ; ++i) {
-  		Wire.write(i2cWriteBuf[i]);
-  	}
-  Wire.endTransmission();
+  i2cWriteRegisters(0x55, 0x07, 6, i2cWriteBuf);
 }
 
 void setFrequency(byte x){
@@ -523,7 +418,6 @@ void setFrequency(byte x){
   //Freeze DCO
   freezeDCO();
   
-  Wire.beginTransmission(0x55);
   //Send the stuff here
   
   //E1 C2 B5 A9 D9 C4
@@ -550,11 +444,7 @@ void setFrequency(byte x){
   //144.100Mhz A0 C2 D6 0E 48 40
   //byte i2cWriteBuf[] = {0xA0, 0xC2, 0xD6, 0x0E, 0x48, 0x40};    
   
-  Wire.write(0x07);
-  	for (byte i = 0; i < 6 ; ++i) {
-  		Wire.write(i2cWriteBuf[i]);
-  	}
-  Wire.endTransmission();
+  i2cWriteRegisters(0x55, 0x07, 6, i2cWriteBuf);
   
   //Unfreeze DCO
   unfreezeDCO();
@@ -592,17 +482,22 @@ void prepData() {
 
 void setup() {
         byte err;
-	Serial.begin(9600);
+	Serial.begin(115200);
         pinMode(txPin, OUTPUT);
         digitalWrite(txPin, HIGH);
-        Wire.begin();
+        
+        //Setup I2C
+        i2cInit();
+        i2cSetBitrate(400);  // try 100kHz
+        
 	Serial.println("OK");
-
-        setFrequency(0);
         
         //check we are working
-        Serial.println(readRegister(137));
+        uint8_t data = i2cReadRegister(0x55, 137);
+        Serial.print("0x"); Serial.println(data);
         digitalWrite(txPin, LOW);
+        
+        setFrequency(0);
         
         digitalWrite(txPin, HIGH);
         delay(2500);
@@ -621,21 +516,12 @@ void setup() {
 }
 
 void loop() {
-    long int count = 0;
-    thor_string("Hello World\n");
-
-    while(1){
-      if(go_thor == 1){
-        //Serial.print(".");
-        update_thor();
-        go_thor = 0;
-      }
-      count++;
-      if(count > 999999){
-        thor_string("Hello World\n");
-        count = 0;
-      }
-    }
+  while(1){
+    thor_string_P(PSTR("Hello, World!TTTTTTTTTTTT\n"));
+    delay(10000);
+    fudgeValue = fudgeValue + 0.1;
+    Serial.println(fudgeValue);
+  }
     
 }
 
